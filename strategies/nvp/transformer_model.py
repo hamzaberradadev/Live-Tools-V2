@@ -4,13 +4,14 @@ import sys
 import numpy as np
 import asyncio
 import tensorflow as tf
+
 # Disable GPU and suppress TensorFlow messages
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-from tensorflow.keras.models import Model  # type: ignore
-from tensorflow.keras.regularizers import l1_l2  # type: ignore
-from tensorflow.keras.layers import (  # type: ignore
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+from tensorflow.keras.models import Model
+from tensorflow.keras.regularizers import l1_l2
+from tensorflow.keras.layers import (
     Input,
     Dense,
     Dropout,
@@ -24,9 +25,14 @@ from tensorflow.keras.layers import (  # type: ignore
     Reshape,
     Concatenate,
 )
-from tensorflow.keras.models import load_model # type: ignore
-from tensorflow.keras.optimizers import Adam  # type: ignore
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, LearningRateScheduler, ModelCheckpoint  # type: ignore
+from tensorflow.keras.models import load_model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import (
+    EarlyStopping,
+    ReduceLROnPlateau,
+    LearningRateScheduler,
+    ModelCheckpoint,
+)
 from tensorflow import keras
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
@@ -34,20 +40,27 @@ import joblib
 import ta
 import pandas as pd
 
-COMPLETE_TRAINING = False
-STARTING_LR = 0.001
-# Add your project path
 sys.path.append(
     "/home/hamza-berrada/Desktop/cooding/airflow/airflow/pluggings/Live-Tools-V2"
 )
 from utilities.bitget_perp import PerpBitget
 from strategies.nvp.embadding import generate_feature_vectors
+
+# Constants
+COMPLETE_TRAINING = False
+STARTING_LR = 0.001
 checkpoint_path = "transformer_model_checkpoint.keras"
 scaler_path = "scaler.save"
 
-from tensorflow import keras
 
-# Register the custom layer with Keras serialization
+class LookAheadMaskLayer(Layer):
+    def call(self, inputs):
+        size = tf.shape(inputs)[1]
+        mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
+        return mask
+
+
+# Custom Positional Encoding Layer
 class PositionalEncoding(Layer):
     def __init__(self, maxlen, embed_dim, **kwargs):
         super(PositionalEncoding, self).__init__(**kwargs)
@@ -81,40 +94,40 @@ class PositionalEncoding(Layer):
         return inputs + self.pos_encoding[:, :seq_len, :]
 
     def get_config(self):
-        # Return the configuration of the layer, including maxlen and embed_dim
         config = super(PositionalEncoding, self).get_config()
-        config.update({
-            "maxlen": self.maxlen,
-            "embed_dim": self.embed_dim
-        })
+        config.update({"maxlen": self.maxlen, "embed_dim": self.embed_dim})
         return config
 
     @classmethod
     def from_config(cls, config):
-        # Recreate the layer from the configuration
         return cls(**config)
 
 
-# Data Augmentation Function
+# Look-Ahead Mask for Decoder
+def create_look_ahead_mask(size):
+    mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
+    return mask
+
+
+# Data Augmentation Function (if needed)
 def augment_data(x, y, noise_factor=0.01):
     x_noisy = x + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=x.shape)
     y_noisy = y + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=y.shape)
     return x_noisy, y_noisy
 
 
+# Learning Rate Scheduler
 def scheduler(epoch, lr):
     if epoch > 10:
-        # Gradually increase the learning rate for the first 10 epochs
         return float(lr * 0.9)
     else:
-        # Continue with the current learning rate
         return float(lr)
 
 
 lr_scheduler = LearningRateScheduler(scheduler)
 
 
-# Generate Additional Features
+# Generate Additional Features (if needed)
 def generate_additional_features(df):
     # Add time-based features
     df["hour"] = df["timestamp"].dt.hour
@@ -136,7 +149,12 @@ def generate_additional_features(df):
     return df
 
 
+# Main Function
 async def main():
+    # Initialize the exchange (replace with your data source)
+    # For demonstration, let's create a synthetic dataset
+    # Replace this part with your data fetching and preparation
+    # Here, we will simulate some data
     # Initialize the exchange
     exchange = PerpBitget()
     await exchange.load_markets()
@@ -146,64 +164,41 @@ async def main():
 
     # Fetch OHLCV data
     timeframe = "1m"
-    limit = 10000
+    limit = 5000
     df = await exchange.get_last_ohlcv(pair, timeframe, limit)
 
     # Close the exchange session
     await exchange.close()
-    # Check if 'timestamp' column exists, create one if not
-    # if "timestamp" not in df.columns:
-    #     # Create a timestamp starting from current time, decrementing by 1 hour
-    #     now = datetime.datetime.now()
-    #     timestamps = [
-    #         now - datetime.timedelta(minutes=(len(df) - i - 1)) for i in range(len(df))
-    #     ]
-    #     df["timestamp"] = timestamps
-    # df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        
-    # df.index = df["timestamp"]
-    # Generate feature vectors
+
     feature_vectors, feature_columns = generate_feature_vectors(df)
 
-    # Generate additional features
-    # df = generate_additional_features(df)
-    # additional_features = [
-    #     "hour",
-    #     "day_of_week",
-    #     "is_weekend",
-    #     "macd",
-    #     "stochastic",
-    #     "bollinger_mavg",
-    #     "bollinger_hband",
-    #     "bollinger_lband",
-    # ]
-    # additional_feature_vectors = df[additional_features].values
+    # Smoothing
+    feature_vectors = pd.DataFrame(feature_vectors, columns=feature_columns)
+    df_smoothed = feature_vectors.rolling(window=3).mean().dropna()
 
-    # # Combine original and additional features
-    # feature_vectors = np.concatenate(
-    #     (feature_vectors, additional_feature_vectors), axis=1
-    # )
-    feature_vectors = pd.DataFrame(feature_vectors)
-    df_smoothed = feature_vectors.rolling(window=3).mean() 
     # Scaling
     scaler = StandardScaler()
     feature_vectors_scaled = scaler.fit_transform(df_smoothed.values)
     joblib.dump(scaler, scaler_path)
+
     # Create sequences of feature vectors
-    sequence_length = 500
+    sequence_length = 300
+    output_steps = 20  # Predict next 20 steps
     x = []
     y = []
-    for i in range(len(feature_vectors_scaled) - sequence_length - 20 + 1):
+    for i in range(len(feature_vectors_scaled) - sequence_length - output_steps + 1):
         x.append(feature_vectors_scaled[i : i + sequence_length])
         y.append(
-            feature_vectors_scaled[i + sequence_length : i + sequence_length + 20]
-        )  # Next 5 data points
+            feature_vectors_scaled[
+                i + sequence_length : i + sequence_length + output_steps
+            ]
+        )
 
     x = np.array(x)
     y = np.array(y)
 
-    # Data Augmentation
-    x_aug, y_aug = x,y#augment_data(x, y)
+    # Data Augmentation (if needed)
+    x_aug, y_aug = x, y  # augment_data(x, y)
 
     # Split data into training, validation, and testing sets
     x_train, x_temp, y_train, y_temp = train_test_split(
@@ -213,89 +208,122 @@ async def main():
         x_temp, y_temp, test_size=0.5, random_state=42
     )
 
+    # Prepare decoder inputs by shifting y_train and y_val
+    decoder_input_train = np.zeros_like(y_train)
+    decoder_input_train[:, 1:, :] = y_train[:, :-1, :]
+    decoder_input_val = np.zeros_like(y_val)
+    decoder_input_val[:, 1:, :] = y_val[:, :-1, :]
+    decoder_input_test = np.zeros_like(y_test)
+    decoder_input_test[:, 1:, :] = y_test[:, :-1, :]
+
     # Define transformer model parameters
     input_shape = (sequence_length, x.shape[2])
+    output_shape = (output_steps, x.shape[2])
     num_heads = 8
-    ff_dim = 128
+    ff_dim = 256  # Increased feed-forward network dimension
     num_transformer_blocks = 6
     dropout_rate = 0.2
-    embedding_dim = 128  # Dimension of the in-model embedding
-    output_steps = 20  # Predict next 5 steps
+    embedding_dim = 128  # Dimension of the embedding
 
     # Build the transformer model
     if COMPLETE_TRAINING and os.path.exists(checkpoint_path):
         print("Loading model from checkpoint...")
-        model = load_model(checkpoint_path)
+        custom_objects = {"PositionalEncoding": PositionalEncoding, "tf": tf}
+        model = load_model(checkpoint_path, custom_objects=custom_objects)
         scaler = joblib.load(scaler_path)
     else:
         print("Building a new model...")
-        model = build_enhanced_transformer_model(
+        model = build_transformer_encoder_decoder_model(
             input_shape=input_shape,
+            output_shape=output_shape,
             num_heads=num_heads,
             ff_dim=ff_dim,
             num_transformer_blocks=num_transformer_blocks,
             dropout_rate=dropout_rate,
             embedding_dim=embedding_dim,
-            output_steps=output_steps,
         )
 
     # Train the transformer model
-    history = train_transformer_model(model, x_train, y_train, x_val, y_val)
+    history = train_transformer_model(
+        model,
+        [
+            x_train,
+            decoder_input_train,
+        ],  # Pass both encoder and decoder inputs for training
+        y_train,
+        [
+            x_val,
+            decoder_input_val,
+        ],  # Pass both encoder and decoder inputs for validation
+        y_val,
+    )
 
     # Evaluate the model
-    evaluate_model(model, x_test, y_test)
+    evaluate_model(model, [x_test, decoder_input_test], y_test)
 
     # Save the transformer model and scaler
     model.save(checkpoint_path)
 
 
-def build_enhanced_transformer_model(
+# Build Encoder-Decoder Transformer Model
+def build_transformer_encoder_decoder_model(
     input_shape,
+    output_shape,
     num_heads,
     ff_dim,
     num_transformer_blocks,
     dropout_rate,
     embedding_dim,
-    output_steps=1,
 ):
-    inputs = Input(shape=input_shape)
+    # Define the encoder inputs
+    encoder_inputs = Input(shape=input_shape, name="encoder_inputs")
+    x = Dense(embedding_dim)(encoder_inputs)
+    x = PositionalEncoding(input_shape[0], embedding_dim)(x)
 
-    # Embedding layer with increased dimensions
-    embedding_layer = Dense(embedding_dim, activation="relu")(inputs)
-
-    # Add positional encoding
-    x = PositionalEncoding(input_shape[0], embedding_dim)(embedding_layer)
-
-    # Transformer blocks
+    # Create the encoder with multiple transformer blocks
     for _ in range(num_transformer_blocks):
-        # Multi-head attention
-        attn_output = MultiHeadAttention(
-            num_heads=num_heads, key_dim=embedding_dim, dropout=dropout_rate
-        )(x, x)
+        attn_output = MultiHeadAttention(num_heads=num_heads, key_dim=embedding_dim)(x, x, x)
         x = Add()([x, attn_output])
         x = LayerNormalization(epsilon=1e-6)(x)
-
-        # Feed-forward network
-        ffn_output = Dense(
-            ff_dim, activation="relu", kernel_regularizer=l1_l2(l1=1e-5, l2=1e-4)
-        )(x)
-        ffn_output = BatchNormalization()(ffn_output)
-        ffn_output = Dropout(dropout_rate)(ffn_output)
+        ffn_output = Dense(ff_dim, activation='relu')(x)
+        ffn_output = Dense(embedding_dim)(ffn_output)
         x = Add()([x, ffn_output])
         x = LayerNormalization(epsilon=1e-6)(x)
+    encoder_outputs = x
 
-    # Output layer for multi-step forecasting
-    x = Flatten()(x)
-    outputs = Dense(output_steps * input_shape[-1])(x)
-    outputs = Reshape((output_steps, input_shape[-1]))(outputs)
+    # Define the decoder inputs
+    decoder_inputs = Input(shape=output_shape, name="decoder_inputs")
+    y = Dense(embedding_dim)(decoder_inputs)
+    y = PositionalEncoding(output_shape[0], embedding_dim)(y)
 
-    model = Model(inputs=inputs, outputs=outputs)
-    model.compile(optimizer=Adam(learning_rate=STARTING_LR), loss="mse", metrics=["mae"])
+    # Create the decoder with multiple transformer blocks
+    for _ in range(num_transformer_blocks):
+        # Masked Multi-Head Attention
+        look_ahead_mask = LookAheadMaskLayer()(y)
+        attn1 = MultiHeadAttention(num_heads=num_heads, key_dim=embedding_dim)(
+            y, y, attention_mask=look_ahead_mask
+        )
+        y = Add()([y, attn1])
+        y = LayerNormalization(epsilon=1e-6)(y)
+        # Encoder-Decoder Attention
+        attn2 = MultiHeadAttention(num_heads=num_heads, key_dim=embedding_dim)(y, encoder_outputs)
+        y = Add()([y, attn2])
+        y = LayerNormalization(epsilon=1e-6)(y)
+        # Feed Forward Network
+        ffn_output = Dense(ff_dim, activation='relu')(y)
+        ffn_output = Dense(embedding_dim)(ffn_output)
+        y = Add()([y, ffn_output])
+        y = LayerNormalization(epsilon=1e-6)(y)
+    decoder_outputs = Dense(output_shape[-1])(y)
+
+    # Create the model with both encoder and decoder inputs
+    model = Model(inputs=[encoder_inputs, decoder_inputs], outputs=decoder_outputs)
+    model.compile(optimizer=Adam(learning_rate=STARTING_LR), loss='mse', metrics=['mae'])
     return model
 
-
+# Training Function
 def train_transformer_model(
-    model, x_train, y_train, x_val, y_val, epochs=100, batch_size=64
+    model, x_train_inputs, y_train, x_val_inputs, y_val, epochs=100, batch_size=32
 ):
     checkpoint = ModelCheckpoint(
         checkpoint_path, monitor="val_loss", save_best_only=True, verbose=1
@@ -304,13 +332,18 @@ def train_transformer_model(
         monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
     )
     reduce_lr = ReduceLROnPlateau(
-        monitor="val_loss", factor=0.2, patience=5, min_lr=1e-6, verbose=1
+        monitor="val_loss", factor=0.5, patience=5, min_lr=1e-6, verbose=1
     )
     lr_scheduler = LearningRateScheduler(scheduler)
+
+    # Pass the inputs as a list of [encoder_inputs, decoder_inputs]
     history = model.fit(
-        x_train,
+        [x_train_inputs[0], x_train_inputs[1]],  # [encoder_inputs, decoder_inputs]
         y_train,
-        validation_data=(x_val, y_val),
+        validation_data=(
+            [x_val_inputs[0], x_val_inputs[1]],
+            y_val,
+        ),  # [encoder_inputs, decoder_inputs]
         epochs=epochs,
         batch_size=batch_size,
         callbacks=[reduce_lr, early_stopping, lr_scheduler, checkpoint],
@@ -319,8 +352,9 @@ def train_transformer_model(
     return history
 
 
-def evaluate_model(model, x_test, y_test):
-    loss, mae = model.evaluate(x_test, y_test)
+# Evaluation Function
+def evaluate_model(model, x_test_inputs, y_test):
+    loss, mae = model.evaluate(x_test_inputs, y_test)
     print(f"Test Loss: {loss}, Test MAE: {mae}")
 
 
