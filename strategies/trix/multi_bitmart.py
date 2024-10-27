@@ -16,7 +16,7 @@ MARGIN_MODE = "isolated" # isolated or cross
 LEVERAGE = 1.5
 ACCOUNT_NAME = "bitmart1"
 SIDE = ["long"]
-DISCORD_WEBHOOK = ""
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1299826011948585000/dZfWaXjYNtcRA2zCZ88rrSlOlzf5_uzVeTfVTvxUKH2EW5rxOqH9eNd7HKGTAPgnkSH4"
 PARAMS = {
     "1h": {
         "p1": {
