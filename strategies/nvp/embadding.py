@@ -75,8 +75,6 @@ def generate_feature_vectors(df):
     df['ema'] = ta.trend.ema_indicator(df['close'], window=14)
     # Relative Strength Index
     df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-    # Average True Range
-    df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=14)
 
     # Handle any remaining NaN values
     df = df.bfill()
@@ -84,10 +82,9 @@ def generate_feature_vectors(df):
 
     # Combine all features into a single DataFrame
     feature_columns = [
-        'open', 'high', 'low', 'close',
-        'price_range', 'price_change', 'direction',
-        'min_price_resistance', 'max_price_resistance',
-        'ma', 'ema', 'rsi', 'atr'
+        'open', 'price_range', 'price_change', 'direction',
+        'min_price_resistance',
+        'rsi'
     ]
 
     # Create feature vectors
