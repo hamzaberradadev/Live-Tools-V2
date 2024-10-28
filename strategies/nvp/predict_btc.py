@@ -1,4 +1,4 @@
-# predict_btc.py
+# improved_btc_prediction.py
 
 import os
 import sys
@@ -6,204 +6,149 @@ import numpy as np
 import pandas as pd
 import asyncio
 import datetime
-from tensorflow.keras.models import load_model # type: ignore
-from tensorflow import keras
-keras.config.enable_unsafe_deserialization()
-from sklearn.preprocessing import StandardScaler
-import joblib
 import matplotlib.pyplot as plt
+from tensorflow.keras.models import load_model # type: ignore
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import joblib
 import ta
 
-# Add your project path
+# Add your project path for additional modules
 sys.path.append("/home/hamza-berrada/Desktop/cooding/airflow/airflow/pluggings/Live-Tools-V2")
 from utilities.bitget_perp import PerpBitget
 from strategies.nvp.embadding import generate_feature_vectors
-from strategies.nvp.transformer_model import generate_additional_features, PositionalEncoding
+from strategies.nvp.transformer_model import custom_objects
 
-def create_sequences(data, sequence_length):
-    sequences = []
-    for i in range(len(data) - sequence_length + 1):
-        sequences.append(data[i:i + sequence_length])
-    return np.array(sequences)
-import numpy as np
-
-def smooth_and_rescale_predictions(predictions, actual, sequence_length=150, window_size=5):
+# Plot the smoothed data
+def plot_smoothed_data(df_smoothed):
     """
-    Smooths the predictions using a moving average and rescales them to align with the actual values.
-    
-    Parameters:
-    - predictions (array-like): The predicted values.
-    - actual (array-like): The actual values corresponding to the predictions.
-    - sequence_length (int): The length of the initial sequence to use for rescaling.
-    - window_size (int): The window size for the moving average smoothing.
-    
-    Returns:
-    - smoothed_rescaled_predictions (array-like): The smoothed and rescaled predictions.
-    """
-    # Step 1: Smooth the predictions using a moving average
-    def moving_average(data, window):
-        return np.convolve(data, np.ones(window)/window, mode='valid')
-    
-    smoothed_predictions = moving_average(predictions, window_size)
-    
-    # Step 2: Rescale the predictions to align with the actual values over the first sequence_length
-    if len(actual) < sequence_length or len(smoothed_predictions) < sequence_length:
-        raise ValueError("The sequence length for rescaling is larger than the available data.")
-    
-    # Calculate the scaling factor based on the ratio of actual to predicted over the first sequence_length
-    scaling_factor = np.mean(actual[:sequence_length]) / np.mean(smoothed_predictions[:sequence_length])
-    
-    # Apply the scaling factor to the smoothed predictions
-    smoothed_rescaled_predictions = smoothed_predictions * scaling_factor
-    
-    # Pad the rescaled predictions to match the original length (since smoothing reduces the array size)
-    padding_length = len(predictions) - len(smoothed_rescaled_predictions)
-    smoothed_rescaled_predictions = np.pad(smoothed_rescaled_predictions, (padding_length, 0), mode='edge')
-    # Plot the results
-    plt.figure(figsize=(12, 6))
-    plt.plot(actual, label='Actual')
-    plt.plot(smoothed_rescaled_predictions, label='Smoothed and Rescaled Predicted', color='orange')
-    plt.title('BTC Actual vs. Smoothed and Rescaled Predicted Close Prices')
-    plt.xlabel('Time Steps')
-    plt.ylabel('Price')
-    plt.legend()
-    plt.show()
-
-def plot_predictions(y_true, y_pred, scaler, feature_index=3):
-    """
-    Plot the actual vs. predicted values for a specific feature over multiple time steps.
+    Plot the smoothed features to inspect the data.
 
     Parameters:
-    - y_true: Actual values, shape (num_samples, output_steps, num_features)
-    - y_pred: Predicted values, shape (num_samples, output_steps, num_features)
-    - scaler: Scaler used to normalize the data.
-    - feature_index: Index of the feature to plot (e.g., 3 for 'close' price).
+    - df_smoothed: DataFrame containing the smoothed feature vectors.
     """
+    plt.plot(range(len(df_smoothed)), df_smoothed[:, 0], label='$')
 
-    # Reshape to 2D arrays
-    y_true_flat = y_true.reshape(-1, y_true.shape[-1])
-    y_pred_flat = y_pred.reshape(-1, y_pred.shape[-1])
-
-    # Inverse transform to original scale
-    y_true_inv = scaler.inverse_transform(y_true_flat)
-    y_pred_inv = scaler.inverse_transform(y_pred_flat)
-
-    y_true_feature = y_true_inv[:, feature_index]
-    y_pred_feature = y_pred_inv[:, feature_index]
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(y_true_feature, label='Actual')
-    plt.plot(y_pred_feature, label='Predicted')
-    plt.title('BTC Actual vs. Predicted Close Prices')
-    plt.xlabel('Time Steps')
-    plt.ylabel('Price')
-    plt.legend()
-    plt.show()
-
-def plot_raw_data(df, feature_column='close'):
-    """
-    Plot the raw data from the exchange for a specific feature.
-
-    Parameters:
-    - df: DataFrame containing the raw data.
-    - feature_column: The column to plot (default is 'close').
-    """
-    plt.figure(figsize=(12, 6))
-    plt.plot(df.index, df[feature_column], label='Raw Data')
-    plt.title(f'BTC {feature_column.capitalize()} Price from Exchange')
+    plt.title('Smoothed Features Over Time')
     plt.xlabel('Time')
-    plt.ylabel('Price')
-    plt.legend()
+    plt.ylabel('Feature Values')
+    plt.legend(loc='upper right')
+    plt.grid()
     plt.show()
 
 async def main():
-    # Load the transformer model and scaler
-    model = load_model('transformer_model_checkpoint.keras', custom_objects={'PositionalEncoding': PositionalEncoding})
+    # Load the model and scaler
+    model = load_model('transformer_model_checkpoint.keras', custom_objects=custom_objects)
     scaler = joblib.load('scaler.save')
 
     # Initialize the exchange
     exchange = PerpBitget()
     await exchange.load_markets()
 
-    # Select the BTC/USDT pair
+    # Fetch the latest BTC/USDT data
     pair = 'BTC/USDT'
-
-    # Fetch the latest OHLCV data for BTC
-    timeframe = '1h'
-    limit = 500
+    timeframe = '1m'
+    limit = 1000  # Number of data points to fetch
+    # Retrieve data and preprocess
     df = await exchange.get_last_ohlcv(pair, timeframe, limit)
     await exchange.close()
 
-    # Check if 'timestamp' column exists, create one if not
-    if "timestamp" not in df.columns:
-        # Create a timestamp starting from current time, decrementing by 1 hour
-        now = datetime.datetime.now()
-        timestamps = [
-            now - datetime.timedelta(hours=(len(df) - i - 1)) for i in range(len(df))
-        ]
-        df["timestamp"] = timestamps
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        
-    df.index = df["timestamp"]
+    # Plot original data for comparison
+    # plot_smoothed_data(df[['open']].values)
+
     # Generate feature vectors
     feature_vectors, feature_columns = generate_feature_vectors(df)
+    # plot_smoothed_data(feature_vectors)
 
-    # Generate additional features
-    df = generate_additional_features(df)
-    additional_features = [
-        "hour",
-        "day_of_week",
-        "is_weekend",
-        "macd",
-        "stochastic",
-        "bollinger_mavg",
-        "bollinger_hband",
-        "bollinger_lband",
-    ]
-    additional_feature_vectors = df[additional_features].values
+    # Convert feature vectors to DataFrame for further processing
+    feature_vectors_df = pd.DataFrame(feature_vectors, columns=feature_columns)
 
-    # Combine original and additional features
-    feature_vectors = np.concatenate(
-        (feature_vectors, additional_feature_vectors), axis=1
-    )
-    # Scaling
-    feature_vectors_scaled = scaler.transform(feature_vectors)
-    # Define sequence length and output steps
-    output_steps = 5  # Number of future steps predicted
+    # Apply rolling mean smoothing and drop NaN values
+    df_smoothed = feature_vectors_df.rolling(window=1).mean().dropna()
 
-    # Create sequences
-    sequence_length = 150
-    x = []
-    for i in range(len(feature_vectors_scaled) - sequence_length - 5 + 1):
-        x.append(feature_vectors_scaled[i : i + sequence_length])
-    x = np.array(x)
-    predictions = model.predict(x)
-    # Get the actual values for comparison
-    y_true = []
-    for i in range(sequence_length, len(feature_vectors_scaled) - output_steps + 1):
-        y_true.append(feature_vectors_scaled[i : i + output_steps])
-    y_true = np.array(y_true)
+    # Debug: Check the smoothed data
+    print("Smoothed Data Sample:\n", df_smoothed.head())
 
-    # Ensure y_true and predictions have the same length
-    min_len = min(len(y_true), len(predictions))
-    y_true = y_true[:min_len]
-    predictions = predictions[:min_len]
-    
-    # Reshape predictions and y_true to 2D
-    y_true_flat = y_true.reshape(-1, y_true.shape[-1])
-    predictions_flat = predictions.reshape(-1, predictions.shape[-1])
-    
-        # Inverse transform to original scale
-    y_true_inv = scaler.inverse_transform(y_true_flat)
-    predictions_inv = scaler.inverse_transform(predictions_flat)
+    # Plot the smoothed data
+    # plot_smoothed_data(df_smoothed[feature_columns].values)
 
-    # Extract the 'close' prices (assuming 'close' is at index 3)
-    y_true_close = y_true_inv[:, 3]
-    predictions_close = predictions_inv[:, 3]
+    # Scale the feature vectors after fitting the scaler on smoothed data
+    scaler.fit(df_smoothed)
+    feature_vectors_scaled = scaler.transform(df_smoothed)
 
-    # Smooth and rescale predictions
-    smooth_and_rescale_predictions(predictions_close, y_true_close, sequence_length=150, window_size=5)
+    # Now check if the smoothed and scaled data still looks appropriate
+    # plot_smoothed_data(feature_vectors_scaled)
 
+    # Define input sequence length and output steps
+    SEQUENCE_LENGTH = 500
+    OUTPUT_STEPS = 50
+
+    # Predict the next 300 points recurrently
+    all_predictions = []
+    current_sequence = feature_vectors_scaled[-SEQUENCE_LENGTH:].copy()
+    # plot_smoothed_data(current_sequence)
+    print(current_sequence.shape)
+    for _ in range(SEQUENCE_LENGTH // OUTPUT_STEPS):
+        # Prepare decoder input (shifted version of last prediction)
+        decoder_input = np.zeros((1, OUTPUT_STEPS, current_sequence.shape[1]))
+        
+        # Make a prediction
+        prediction = model.predict([current_sequence[np.newaxis, :, :], decoder_input])
+        
+        # Append prediction to results
+        all_predictions.append(prediction[0])
+        
+        # Update the current sequence with the latest prediction
+        current_sequence = np.vstack((current_sequence[-(SEQUENCE_LENGTH - OUTPUT_STEPS):], prediction[0]))
+
+    # Combine all predictions
+    all_predictions = np.vstack(all_predictions)
+
+    # Debug: Check the prediction shape
+    print(f"All predictions shape: {all_predictions.shape}")
+
+    # Inverse transform the predictions to original scale
+    all_predictions_inv = scaler.inverse_transform(all_predictions)
+    actual_data_inv = scaler.inverse_transform(feature_vectors_scaled[-SEQUENCE_LENGTH:].copy())
+
+    # Calculate the difference between the last actual data point and the first prediction point
+    first_prediction_value = all_predictions_inv[0, 0]  # Adjust index for "close" as needed
+    last_actual_value = actual_data_inv[-1, 0]  # Adjust index for "close" as needed
+    difference = last_actual_value - first_prediction_value
+
+    # Apply the difference to adjust the predictions
+    all_predictions_inv += difference
+
+    # Concatenate the last 300 actual points with the predictions for a continuous plot
+    combined_data = np.concatenate((actual_data_inv, all_predictions_inv), axis=0)
+
+    # Calculate error metrics only for the prediction part
+    mae = mean_absolute_error(actual_data_inv[:, 0], all_predictions_inv[:, 0])  # Use the appropriate index for "close"
+    mse = mean_squared_error(actual_data_inv[:, 0], all_predictions_inv[:, 0])  # Use the appropriate index for "close"
+
+    print(f"Mean Absolute Error (MAE): {mae}")
+    print(f"Mean Squared Error (MSE): {mse}")
+
+    # Plot the results with detailed checks
+    plt.figure(figsize=(14, 7))
+    plt.plot(range(len(combined_data)), combined_data[:, 0], label='Actual and Predicted BTC Prices', color='blue')  # Adjust feature index as needed
+    plt.axvline(x=500, color='red', linestyle='--', label='Prediction Start')
+    plt.title('BTC Price Prediction vs. Actual')
+    plt.xlabel('Time Steps')
+    plt.ylabel('BTC Price')
+    plt.legend()
+
+    # Annotate the difference on the plot
+    plt.annotate(f'Adjustment Applied: {difference:.2f}', xy=(SEQUENCE_LENGTH, all_predictions_inv[0, 0]), 
+                 xytext=(SEQUENCE_LENGTH+OUTPUT_STEPS, all_predictions_inv[0, 0] + 500),
+                 arrowprops=dict(facecolor='black', arrowstyle='->'), fontsize=12, color='red')
+
+    plt.grid()
+    plt.show()
+
+    # Debug: Print the last few values of actual and predicted data
+    print("Last few actual values:\n", actual_data_inv[-5:, 0])
+    print("Last few adjusted predicted values:\n", all_predictions_inv[-5:, 0])
 
 if __name__ == '__main__':
     asyncio.run(main())

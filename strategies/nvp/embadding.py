@@ -12,10 +12,10 @@ from tensorflow.keras.models import Model # type: ignore
 from tensorflow.keras.layers import Input, Dense, Dropout # type: ignore
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau # type: ignore
 from tensorflow.keras.optimizers import Adam # type: ignore
-from tensorflow.keras import regularizers
+from tensorflow.keras import regularizers # type: ignore
 import matplotlib.pyplot as plt
 from scipy.signal import argrelextrema
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import Adam # type: ignore
 # Add your project path
 sys.path.append("/home/hamza-berrada/Desktop/cooding/airflow/airflow/pluggings/Live-Tools-V2")
 from utilities.bitget_perp import PerpBitget
@@ -23,6 +23,16 @@ import ta
 # Disable GPU and suppress TensorFlow messages
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+import numpy as np
+import pandas as pd
+import ta
+from scipy.signal import argrelextrema
+
+import numpy as np
+import pandas as pd
+import ta
+from scipy.signal import argrelextrema
 
 def generate_feature_vectors(df):
     """
@@ -40,12 +50,10 @@ def generate_feature_vectors(df):
     df['price_change'] = df['close'] - df['open']
     df['direction'] = df['price_change'].apply(lambda x: 1 if x >= 0 else 0)  # Up or Down
 
-    # Note: We are not scaling 'open', 'high', 'low', 'close' here
-    # We will scale the entire feature vector later in the train_embedding function
-
     # 2. Support and Resistance levels
     prices = df['close'].values
-    order = 5  # Adjust the order parameter as needed
+    order = 5  # Adjust the order parameter as needed for detecting local extrema
+
     # Local minima (supports)
     local_min_indices = argrelextrema(prices, np.less_equal, order=order)[0]
     # Local maxima (resistances)
@@ -64,9 +72,9 @@ def generate_feature_vectors(df):
         df.at[i, 'min_price_resistance'] = last_min
         df.at[i, 'max_price_resistance'] = last_max
 
-    # Fill NaN values
-    df['min_price_resistance'] = df['min_price_resistance'].ffill()
-    df['max_price_resistance'] = df['max_price_resistance'].ffill()
+    # Interpolate to fill gaps in support and resistance levels and forward-fill remaining NaNs
+    df['min_price_resistance'] = df['min_price_resistance'].interpolate().ffill().bfill()
+    df['max_price_resistance'] = df['max_price_resistance'].interpolate().ffill().bfill()
 
     # 3. Technical Indicators
     # Moving Average
@@ -76,21 +84,36 @@ def generate_feature_vectors(df):
     # Relative Strength Index
     df['rsi'] = ta.momentum.rsi(df['close'], window=14)
 
-    # Handle any remaining NaN values
-    df = df.bfill()
-    df = df.ffill()
+    # Handle any remaining NaN values by forward-filling and backward-filling
+    df = df.bfill().ffill()
 
-    # Combine all features into a single DataFrame
+    # Debugging: Check for constant values in each feature
+    constant_columns = [col for col in df.columns if df[col].nunique() == 1]
+    if constant_columns:
+        print(f"Warning: The following columns have constant values: {constant_columns}")
+
+    stale_mask = (
+        (df['open'].rolling(window=4).std() == 0) 
+    )
+
+    # Drop stale points
+    df = df[~stale_mask]
+    # Combine selected features into the feature vectors
     feature_columns = [
         'open', 'price_range', 'price_change', 'direction',
         'min_price_resistance',
         'rsi'
     ]
 
-    # Create feature vectors
+    # Check for NaNs before creating feature vectors
+    if df[feature_columns].isna().any().any():
+        print("Warning: NaN values detected in the feature vectors.")
+
+    # Create feature vectors as a numpy array
     feature_vectors = df[feature_columns].values
     
     return feature_vectors, feature_columns
+
 
 async def main():
     # Initialize the exchange
