@@ -15,12 +15,12 @@ import joblib
 import ta
 
 import tensorflow as tf
-from tensorflow.keras.models import load_model, Model
-from tensorflow.keras.layers import (
+from tensorflow.keras.models import load_model, Model # type: ignore
+from tensorflow.keras.layers import ( # type: ignore
     Input, Dense, LayerNormalization, MultiHeadAttention, Dropout,
     TimeDistributed, LSTM, Add, Layer
 )
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint # type: ignore
 
 # Add your project path for additional modules
 sys.path.append("/home/hamza-berrada/Desktop/cooding/airflow/airflow/pluggings/Live-Tools-V2")

@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 import tensorflow as tf
-from tensorflow.keras.models import load_model
+from tensorflow.keras.models import load_model # type: ignore
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 import joblib
