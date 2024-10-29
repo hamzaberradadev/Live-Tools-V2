@@ -28,7 +28,6 @@ import numpy as np
 import pandas as pd
 import ta
 from scipy.signal import argrelextrema
-
 import numpy as np
 import pandas as pd
 import ta
@@ -37,13 +36,16 @@ from scipy.signal import argrelextrema
 def generate_feature_vectors(df):
     """
     Generate feature vectors from OHLCV data including candlestick patterns,
-    support and resistance levels, and technical indicators.
+    support and resistance levels, technical indicators, and a custom 'ovlh3' feature.
     """
     # Ensure the DataFrame has the necessary columns
     required_columns = ['open', 'high', 'low', 'close', 'volume']
     for col in required_columns:
         if col not in df.columns:
             raise ValueError(f"Column '{col}' is missing from the DataFrame.")
+
+    # 0. Custom Feature: 'ovlh4' (average of open, volume, low, high divided by 4)
+    df['ovlh4'] = (df['open'] + df['volume'] + df['low'] + df['high']) / 4
 
     # 1. Candlestick features
     df['price_range'] = df['high'] - df['low']
@@ -83,6 +85,21 @@ def generate_feature_vectors(df):
     df['ema'] = ta.trend.ema_indicator(df['close'], window=14)
     # Relative Strength Index
     df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+    
+    # MACD (Moving Average Convergence Divergence)
+    df['macd'] = ta.trend.macd(df['close'])
+    df['macd_signal'] = ta.trend.macd_signal(df['close'])
+    df['macd_diff'] = ta.trend.macd_diff(df['close'])
+
+    # TRIX (Triple Exponential Average)
+    df['trix'] = ta.trend.trix(df['close'], window=15)
+
+    # Bollinger Bands
+    df['bollinger_mavg'] = ta.volatility.bollinger_mavg(df['close'], window=20)
+    df['bollinger_hband'] = ta.volatility.bollinger_hband(df['close'], window=20)
+    df['bollinger_lband'] = ta.volatility.bollinger_lband(df['close'], window=20)
+    df['bollinger_hband_indicator'] = ta.volatility.bollinger_hband_indicator(df['close'], window=20)
+    df['bollinger_lband_indicator'] = ta.volatility.bollinger_lband_indicator(df['close'], window=20)
 
     # Handle any remaining NaN values by forward-filling and backward-filling
     df = df.bfill().ffill()
@@ -93,16 +110,18 @@ def generate_feature_vectors(df):
         print(f"Warning: The following columns have constant values: {constant_columns}")
 
     stale_mask = (
-        (df['open'].rolling(window=4).std() == 0) 
+        (df['ovlh4'].rolling(window=4).std() == 0) 
     )
 
     # Drop stale points
     df = df[~stale_mask]
+    
     # Combine selected features into the feature vectors
     feature_columns = [
-        'open', 'price_range', 'price_change', 'direction',
-        'min_price_resistance',
-        'rsi'
+        'ovlh4', 'price_range', 'price_change', 'direction',
+        'min_price_resistance', 'max_price_resistance',
+        'rsi', 'ma', 'ema', 'macd', 'macd_signal', 'macd_diff',
+        'trix', 'bollinger_mavg', 'bollinger_hband', 'bollinger_lband'
     ]
 
     # Check for NaNs before creating feature vectors
@@ -110,7 +129,7 @@ def generate_feature_vectors(df):
         print("Warning: NaN values detected in the feature vectors.")
 
     # Create feature vectors as a numpy array
-    feature_vectors = df[feature_columns].values
+    feature_vectors = df[feature_columns]
     
     return feature_vectors, feature_columns
 

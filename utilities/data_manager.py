@@ -10,8 +10,6 @@ from tqdm.auto import tqdm
 from asyncio import Semaphore
 
 
-sem = Semaphore(500) # 500 concurrent requests
-
 
 class ExchangeDataManager:
 
@@ -111,6 +109,8 @@ class ExchangeDataManager:
         Raises:
             NotImplementedError: Raise si l'exchange n'est pas paramétré/supporté
         """
+        self.sem = Semaphore(500)
+        
         self.exchange_name = exchange_name.lower()
         self.path_download = path_download
         try:
@@ -201,7 +201,7 @@ class ExchangeDataManager:
                         while True:
                             # tasks.append(asyncio.create_task(self.download_tf(
                             #     coin, interval, current_timestamp)))
-                            tasks.append(self.download_tf_with_semaphore(coin, interval, current_timestamp, sem))
+                            tasks.append(self.download_tf_with_semaphore(coin, interval, current_timestamp, self.sem))
                             current_timestamp = min([current_timestamp + self.exchange_dict["limit_size_request"] *
                                                     self.intervals_dict[interval]["interval_ms"], end_timestamp])
                             if current_timestamp >= end_timestamp:
@@ -247,8 +247,11 @@ class ExchangeDataManager:
                     continue
 
     async def download_tf_with_semaphore(self, coin, interval, current_timestamp, sem: Semaphore):
-        async with sem:
+        await sem.acquire()
+        try:
             return await self.download_tf(coin, interval, current_timestamp)
+        finally:
+            sem.release()
 
     async def download_tf(self, coin, interval, start_timestamp):
         """

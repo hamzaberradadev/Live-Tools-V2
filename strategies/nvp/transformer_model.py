@@ -20,13 +20,17 @@ FF_DIM = 1256  # Feed-forward network dimension
 NUM_TRANSFORMER_BLOCKS = 16
 DROPOUT_RATE = 0.2
 EMBEDDING_DIM = 256
-SEQUENCE_LENGTH = 500
+SEQUENCE_LENGTH = 1000
 OUTPUT_STEPS = 50  # Predict next 20 steps
-
+LOAD_NEW_DATA = True
+pair = "BTC/USDT"
+coin_to_dl = ["BTC/USDT:USDT"]
+interval = "1m"
+start_date = "2024-10-01 00:00:00"
 # Training Configuration
-COMPLETE_TRAINING = True  # Set to True to train a new model
+COMPLETE_TRAINING = False  # Set to True to train a new model
 STARTING_LR = 0.001
-EPOCHS = 100
+EPOCHS = 20
 BATCH_SIZE = 32
 
 # Paths
@@ -61,7 +65,6 @@ import pandas as pd
 
 # Add your project path
 sys.path.append("/home/hamza-berrada/Desktop/cooding/airflow/airflow/pluggings/Live-Tools-V2")
-sys.path.append("/Users/benoit/Documents/programmation/Live-Tools-V2")
 
 #from utilities.bitget_perp import PerpBitget
 from utilities.data_manager import ExchangeDataManager
@@ -348,64 +351,51 @@ def evaluate_model(model, x_test_inputs, y_test):
 #          Main Function        #
 # ---------------------------- #
 
-# Main Function
 async def main():
-    # Initialize the exchange
-    # exchange = PerpBitget()
-    # await exchange.load_markets()
-
-    # # Select a single pair
-    # pair = "BTC/USDT"
-
-    # # Fetch OHLCV data
-    # timeframe = "1m"
-    # limit = 10000
-    # df = await exchange.get_last_ohlcv(pair, timeframe, limit)
-
-    # # Close the exchange session
-    # await exchange.close()
-
-    #initialize the data manager
-    exchange = ExchangeDataManager(
-        exchange_name="bitget", path_download="./database/exchanges"
-    )
+    pair = "BTC/USDT"
+    df_smoothed = pd.DataFrame()
     
-    # Define the coin we want to download
-    coin_to_dl = ["BTC/USDT:USDT"]
-    after_dl = ["BTC/USDT"]
-    interval = "1m"
-    start_date = "2023-01-01 00:00:00"
-    # Define intervals we want to download
-    intervals = [interval]
-    # Download data
-    await exchange.download_data(
-        coins=coin_to_dl,
-        intervals=intervals,
-        start_date= start_date,
-    )
+    if LOAD_NEW_DATA:
+        # Initialisation de l'ExchangeDataManager
+        exchange = ExchangeDataManager(
+            exchange_name="bitget", path_download="./database/exchanges"
+        )
+        
+        # Définir les paramètres pour le téléchargement des données
 
-    df_list = {}
-    for pair in after_dl:
-        df = exchange.load_data(pair, interval)
-        df_list[pair] = df.loc["2024-07-01":]
+        intervals = [interval]
+        
+        # Télécharger les données
+        await exchange.download_data(
+            coins=coin_to_dl,
+            intervals=intervals,
+            start_date=start_date,
+        )
+        df = exchange.load_data(pair, interval, start_date)
+        logger.info("Starting generate feature vectors.")
+        df_donnes = pd.DataFrame()
+        for i in range(0, len(df), 5000):
+            subset = df.iloc[i:i + 5000].copy()
 
-    # Feature Engineering
-    logger.info("Starting generate feature vectors.")
-    feature_vectors, feature_columns = generate_feature_vectors(df)
-    logger.info("generate feature vectors done.")
-
-    print(feature_vectors[-5:])
+            # Feature Engineering
+            feature_vectors, _ = generate_feature_vectors(subset)
+            df_donnes = pd.concat([df_donnes,feature_vectors])
+        logger.info("generate feature vectors done.")
+        df_smoothed = df_donnes.rolling(window=2).mean().dropna()
+        df_smoothed.to_csv(f'./data.csv')
+    else:
+        df_smoothed = pd.read_csv(f'./data.csv')
     # Smoothing
-    feature_vectors = pd.DataFrame(feature_vectors, columns=feature_columns)
-    df_smoothed = feature_vectors.rolling(window=2).mean().dropna()
 
     # Scaling
+    logger.info("Scaling feature vectors.")
     scaler = StandardScaler()
-    # feature_vectors_scaled = scaler.fit_transform(feature_vectors)
-    feature_vectors_scaled = scaler.fit_transform(df_smoothed.values)
+    feature_vectors_scaled = scaler.fit_transform(df_smoothed.drop(columns=['date']).values)
     joblib.dump(scaler, SCALER_PATH)
+    logger.info("Scaling feature vectors done!.")
 
     # Create sequences of feature vectors
+    logger.info("Creating vector traning")
     x = []
     y = []
     for i in range(len(feature_vectors_scaled) - SEQUENCE_LENGTH - OUTPUT_STEPS + 1):
@@ -443,7 +433,7 @@ async def main():
     # Define transformer model parameters
     input_shape = (SEQUENCE_LENGTH, x.shape[2])  # (300,6)
     output_shape = (OUTPUT_STEPS, x.shape[2])   # (20,6)
-
+    logger.info("Creating vector traning done!")
     # Debugging: Print shapes to verify
     print("x_train shape:", x_train.shape)  # Should be (batch_size, 300, 6)
     print("decoder_input_train shape:", decoder_input_train.shape)  # Should be (batch_size, 20, 6)
@@ -457,14 +447,14 @@ async def main():
     print("decoder_input_test shape:", decoder_input_test.shape)  # Should be (468, 20, 6)
     print("y_test shape:", y_test.shape)  # Should be (468, 20, 6)
 
-    # Delete existing checkpoint if COMPLETE_TRAINING is True
+    
     if not COMPLETE_TRAINING and os.path.exists(CHECKPOINT_PATH):
-        print("Deleting existing checkpoint to train a new model...")
+        logger.info("Deleting existing checkpoint to train a new model...")
         os.remove(CHECKPOINT_PATH)
 
     # Build or Load the transformer model
     if not os.path.exists(CHECKPOINT_PATH):
-        print("Building a new model...")
+        logger.info("Building a new model...")
         model = build_transformer_encoder_decoder_model(
             input_shape=input_shape,
             output_shape=output_shape,
@@ -476,10 +466,11 @@ async def main():
         )
         print(model.summary())
     else:
-        print("Loading model from checkpoint...")
+        logger.info("Loading model from checkpoint...")
 
         model = tf.keras.models.load_model(CHECKPOINT_PATH, custom_objects=custom_objects)
         scaler = joblib.load(SCALER_PATH)
+    
 
     # Train the transformer model
     history = train_transformer_model(
