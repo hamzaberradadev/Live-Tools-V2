@@ -385,12 +385,15 @@ async def main():
         df_smoothed.to_csv(f'./data.csv')
     else:
         df_smoothed = pd.read_csv(f'./data.csv')
+        if 'date' in df_smoothed.columns:
+            df_smoothed.drop(columns=['date'],inplace=True)
     # Smoothing
 
     # Scaling
     logger.info("Scaling feature vectors.")
     scaler = StandardScaler()
-    feature_vectors_scaled = scaler.fit_transform(df_smoothed.drop(columns=['date']).values)
+    
+    feature_vectors_scaled = scaler.fit_transform(df_smoothed.values)
     joblib.dump(scaler, SCALER_PATH)
     logger.info("Scaling feature vectors done!.")
 
