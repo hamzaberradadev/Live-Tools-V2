@@ -4,6 +4,11 @@ import sys
 import numpy as np
 import asyncio
 import tensorflow as tf
+import logging
+
+# Set up logger
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 # ---------------------------- #
 #      Hyperparameters         #
@@ -382,10 +387,13 @@ async def main():
     df_list = {}
     for pair in after_dl:
         df = exchange.load_data(pair, interval)
-        df_list[pair] = df.loc["2023-01-01":]
+        df_list[pair] = df.loc["2024-07-01":]
 
     # Feature Engineering
+    logger.info("Starting generate feature vectors.")
     feature_vectors, feature_columns = generate_feature_vectors(df)
+    logger.info("generate feature vectors done.")
+
     print(feature_vectors[-5:])
     # Smoothing
     feature_vectors = pd.DataFrame(feature_vectors, columns=feature_columns)
