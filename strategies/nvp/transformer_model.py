@@ -56,7 +56,10 @@ import pandas as pd
 
 # Add your project path
 sys.path.append("/home/hamza-berrada/Desktop/cooding/airflow/airflow/pluggings/Live-Tools-V2")
-from utilities.bitget_perp import PerpBitget
+sys.path.append("/Users/benoit/Documents/programmation/Live-Tools-V2")
+
+#from utilities.bitget_perp import PerpBitget
+from utilities.data_manager import ExchangeDataManager
 from strategies.nvp.embadding import generate_feature_vectors
 
 # ---------------------------- #
@@ -343,19 +346,43 @@ def evaluate_model(model, x_test_inputs, y_test):
 # Main Function
 async def main():
     # Initialize the exchange
-    exchange = PerpBitget()
-    await exchange.load_markets()
+    # exchange = PerpBitget()
+    # await exchange.load_markets()
 
-    # Select a single pair
-    pair = "BTC/USDT"
+    # # Select a single pair
+    # pair = "BTC/USDT"
 
-    # Fetch OHLCV data
-    timeframe = "1m"
-    limit = 10000
-    df = await exchange.get_last_ohlcv(pair, timeframe, limit)
+    # # Fetch OHLCV data
+    # timeframe = "1m"
+    # limit = 10000
+    # df = await exchange.get_last_ohlcv(pair, timeframe, limit)
 
-    # Close the exchange session
-    await exchange.close()
+    # # Close the exchange session
+    # await exchange.close()
+
+    #initialize the data manager
+    exchange = ExchangeDataManager(
+        exchange_name="bitget", path_download="./database/exchanges"
+    )
+    
+    # Define the coin we want to download
+    coin_to_dl = ["BTC/USDT:USDT"]
+    after_dl = ["BTC/USDT"]
+    interval = "1m"
+    start_date = "2023-01-01 00:00:00"
+    # Define intervals we want to download
+    intervals = [interval]
+    # Download data
+    await exchange.download_data(
+        coins=coin_to_dl,
+        intervals=intervals,
+        start_date= start_date,
+    )
+
+    df_list = {}
+    for pair in after_dl:
+        df = exchange.load_data(pair, interval)
+        df_list[pair] = df.loc["2023-01-01":]
 
     # Feature Engineering
     feature_vectors, feature_columns = generate_feature_vectors(df)

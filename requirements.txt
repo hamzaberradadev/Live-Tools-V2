@@ -2,3 +2,15 @@ ccxt==4.4.7
 pydantic==2.5.3
 pandas==2.2.0
 ta==0.11.0
+pandas-ta==0.3.14b0
+scipy
+seaborn
+statsmodels
+tqdm
+ipywidgets
+ipykernel
+lightweight_charts==1.0.18.8
+nbstripout
+openpyxl
+numpy
+tensorflow
